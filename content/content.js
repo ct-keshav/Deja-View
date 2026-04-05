@@ -1,10 +1,14 @@
-// Visual Diff Extension - Content Script (Orchestrator)
-// Optimized for fast open/close: lazy diff/heatmap computation, cached results.
+// Visual Diff Extension - Content Script (Memory-Safe Orchestrator)
+// Lazy diff/heatmap computation, releases unused buffers on mode switch.
 
 (function () {
   'use strict';
 
-  const state = {
+  // Max pixels for composite export canvas (4 panels).
+  // 40M pixels ≈ 160 MB RGBA — keeps clipboard export safe.
+  var MAX_COMPOSITE_PIXELS = 40_000_000;
+
+  var state = {
     active: false,
     mode: 'overlay',
     opacity: 0.5,
@@ -105,16 +109,16 @@
 
   function hideFixedElements() {
     state.hiddenFixedElements = [];
-    const style = document.createElement('style');
+    var style = document.createElement('style');
     style.id = 'vdiff-hide-fixed';
     style.textContent = '[data-vdiff-was-fixed] { display: none !important; }';
     document.head.appendChild(style);
 
-    const allElements = document.querySelectorAll('*');
-    for (let i = 0; i < allElements.length; i++) {
-      const el = allElements[i];
+    var allElements = document.querySelectorAll('*');
+    for (var i = 0; i < allElements.length; i++) {
+      var el = allElements[i];
       if (el.id === 'vdiff-overlay-container' || el.id === 'vdiff-toolbar-host') continue;
-      const pos = getComputedStyle(el).position;
+      var pos = getComputedStyle(el).position;
       if (pos === 'fixed' || pos === 'sticky') {
         el.setAttribute('data-vdiff-was-fixed', '1');
         state.hiddenFixedElements.push(el);
@@ -123,11 +127,11 @@
   }
 
   function showFixedElements() {
-    for (let i = 0; i < state.hiddenFixedElements.length; i++) {
+    for (var i = 0; i < state.hiddenFixedElements.length; i++) {
       state.hiddenFixedElements[i].removeAttribute('data-vdiff-was-fixed');
     }
     state.hiddenFixedElements = [];
-    const style = document.getElementById('vdiff-hide-fixed');
+    var style = document.getElementById('vdiff-hide-fixed');
     if (style) style.remove();
   }
 
@@ -136,7 +140,7 @@
   async function handleRenderComparison(referenceDataUrl, screenshotDataUrl) {
     cleanup();
 
-    let refImg, scrImg;
+    var refImg, scrImg;
     await Promise.all([
       VDiff.utils.loadImage(referenceDataUrl).then(function (img) { refImg = img; }),
       VDiff.utils.loadImage(screenshotDataUrl).then(function (img) { scrImg = img; }),
@@ -145,7 +149,7 @@
     state.referenceImg = refImg;
     state.screenshotImg = scrImg;
 
-    const normalized = VDiff.utils.normalizeImages(refImg, scrImg);
+    var normalized = VDiff.utils.normalizeImages(refImg, scrImg);
     state.normalizedWidth = normalized.width;
     state.normalizedHeight = normalized.height;
     state.refImageData = normalized.refImageData;
@@ -167,7 +171,10 @@
 
     state.toolbar = VDiff.toolbar.create({
       onModeChange: function (mode) {
+        var prevMode = state.mode;
         state.mode = mode;
+        // Release buffers not needed by the new mode.
+        releaseUnusedBuffers(prevMode, mode);
         render();
       },
       onOpacityChange: function (opacity) {
@@ -214,18 +221,32 @@
     render();
   }
 
+  // --- Release buffers not needed by the current mode ---
+
+  function releaseUnusedBuffers(prevMode, newMode) {
+    // When leaving diff mode, free the diff buffer (it depends on density anyway).
+    if (prevMode === 'diff' && newMode !== 'diff') {
+      state.diffImageData = null;
+      state.diffDensity = -1;
+    }
+    // When leaving heatmap mode, free the heatmap buffer.
+    if (prevMode === 'heatmap' && newMode !== 'heatmap') {
+      state.heatmapImageData = null;
+    }
+  }
+
   // --- Fast match % (no pixel output, just count) ---
 
   function computeMatchPercentage() {
-    const ref = state.refImageData.data;
-    const scr = state.scrImageData.data;
-    const len = ref.length;
-    let match = 0;
-    const total = state.normalizedWidth * state.normalizedHeight;
-    for (let i = 0; i < len; i += 4) {
-      let rd = ref[i] - scr[i]; rd = rd < 0 ? -rd : rd;
-      let gd = ref[i + 1] - scr[i + 1]; gd = gd < 0 ? -gd : gd;
-      let bd = ref[i + 2] - scr[i + 2]; bd = bd < 0 ? -bd : bd;
+    var ref = state.refImageData.data;
+    var scr = state.scrImageData.data;
+    var len = ref.length;
+    var match = 0;
+    var total = state.normalizedWidth * state.normalizedHeight;
+    for (var i = 0; i < len; i += 4) {
+      var rd = ref[i] - scr[i]; rd = rd < 0 ? -rd : rd;
+      var gd = ref[i + 1] - scr[i + 1]; gd = gd < 0 ? -gd : gd;
+      var bd = ref[i + 2] - scr[i + 2]; bd = bd < 0 ? -bd : bd;
       if (rd + gd + bd <= 30) match++;
     }
     state.matchPercentage = ((match / total) * 100).toFixed(2);
@@ -235,7 +256,7 @@
 
   function ensureDiff() {
     if (state.diffImageData && state.diffDensity === state.density) return;
-    const result = VDiff.diff.computeDiff(
+    var result = VDiff.diff.computeDiff(
       state.refImageData, state.scrImageData,
       state.normalizedWidth, state.normalizedHeight,
       30, state.density
@@ -258,7 +279,7 @@
 
   function render() {
     if (!state.active || !state.canvas) return;
-    const m = state.mode;
+    var m = state.mode;
     if (m === 'overlay') {
       VDiff.overlay.renderOverlay(state.canvas, state.screenshotImg, state.referenceImg, state.opacity);
     } else if (m === 'diff') {
@@ -272,10 +293,10 @@
     }
   }
 
-  // --- Composite Image Generation ---
+  // --- Composite Image Generation (Memory-Capped) ---
 
   function imageDataToCanvas(imageData) {
-    const c = document.createElement('canvas');
+    var c = document.createElement('canvas');
     c.width = imageData.width;
     c.height = imageData.height;
     c.getContext('2d').putImageData(imageData, 0, 0);
@@ -288,64 +309,79 @@
     ensureDiff();
     ensureHeatmap();
 
-    const w = state.normalizedWidth;
-    const h = state.normalizedHeight;
-    const gap = 16;
-    const labelH = 32;
-    const cols = 4;
-    const totalW = w * cols + gap * (cols + 1);
-    const totalH = h + labelH + gap * 2;
+    var w = state.normalizedWidth;
+    var h = state.normalizedHeight;
+    var gap = 16;
+    var labelH = 32;
+    var cols = 4;
+    var totalW = w * cols + gap * (cols + 1);
+    var totalH = h + labelH + gap * 2;
 
-    const c = document.createElement('canvas');
+    // Check if composite would exceed pixel budget.
+    // If so, scale down to fit.
+    var totalPixels = totalW * totalH;
+    var scale = 1;
+    if (totalPixels > MAX_COMPOSITE_PIXELS) {
+      scale = Math.sqrt(MAX_COMPOSITE_PIXELS / totalPixels);
+      totalW = Math.round(totalW * scale);
+      totalH = Math.round(totalH * scale);
+      w = Math.round(w * scale);
+      h = Math.round(h * scale);
+      gap = Math.round(gap * scale);
+      labelH = Math.round(labelH * scale);
+    }
+
+    var c = document.createElement('canvas');
     c.width = totalW;
     c.height = totalH;
-    const ctx = c.getContext('2d');
+    var ctx = c.getContext('2d');
 
     ctx.fillStyle = '#12121f';
     ctx.fillRect(0, 0, totalW, totalH);
 
-    ctx.font = '600 14px -apple-system, BlinkMacSystemFont, sans-serif';
+    var fontSize = Math.max(8, Math.round(14 * scale));
+    ctx.font = '600 ' + fontSize + 'px -apple-system, BlinkMacSystemFont, sans-serif';
     ctx.textBaseline = 'middle';
 
-    const imgY = labelH + gap;
-    const labels = [
+    var imgY = labelH + gap;
+    var labels = [
       { text: 'ORIGINAL', color: '#e94560' },
       { text: 'CURRENT', color: '#3c8cff' },
       { text: 'DIFF (' + state.matchPercentage + '% match)', color: '#e9a825' },
       { text: 'HEATMAP', color: '#c850c0' },
     ];
 
-    for (let i = 0; i < cols; i++) {
-      const x = gap * (i + 1) + w * i;
+    for (var i = 0; i < cols; i++) {
+      var lx = gap * (i + 1) + w * i;
       ctx.fillStyle = labels[i].color;
-      ctx.fillText(labels[i].text, x, labelH / 2 + gap / 2);
+      ctx.fillText(labels[i].text, lx, labelH / 2 + gap / 2);
     }
 
-    const x1 = gap;
+    var x1 = gap;
     ctx.drawImage(state.referenceImg, x1, imgY, w, h);
 
-    const x2 = gap * 2 + w;
+    var x2 = gap * 2 + w;
     ctx.drawImage(state.screenshotImg, x2, imgY, w, h);
 
-    const x3 = gap * 3 + w * 2;
-    const diffCanvas = imageDataToCanvas(state.diffImageData);
-    ctx.drawImage(diffCanvas, x3, imgY);
+    var x3 = gap * 3 + w * 2;
+    var diffCanvas = imageDataToCanvas(state.diffImageData);
+    ctx.drawImage(diffCanvas, 0, 0, diffCanvas.width, diffCanvas.height, x3, imgY, w, h);
 
-    const x4 = gap * 4 + w * 3;
-    const heatCanvas = imageDataToCanvas(state.heatmapImageData);
-    ctx.drawImage(heatCanvas, x4, imgY);
+    var x4 = gap * 4 + w * 3;
+    var heatCanvas = imageDataToCanvas(state.heatmapImageData);
+    ctx.drawImage(heatCanvas, 0, 0, heatCanvas.width, heatCanvas.height, x4, imgY, w, h);
 
     return c;
   }
 
   function getCompositeDataUrl() {
-    const c = buildCompositeCanvas();
+    var c = buildCompositeCanvas();
     if (!c) return Promise.reject(new Error('No images to copy'));
     return Promise.resolve(c.toDataURL('image/png'));
   }
 
   function copyAllToClipboard() {
-    const c = buildCompositeCanvas();
+    var c = buildCompositeCanvas();
     if (!c) return Promise.reject(new Error('No images to copy'));
     return new Promise(function (resolve, reject) {
       c.toBlob(function (blob) {

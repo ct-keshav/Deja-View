@@ -1,5 +1,33 @@
-// Visual Diff Extension - Background Service Worker (Optimized)
+// Visual Diff Extension - Background Service Worker (Memory-Safe)
 // Uses chrome.storage.session to survive service worker restarts.
+
+// --- Constants ---
+
+// Max pixels for the stitched capture canvas (width * height).
+// 60M pixels ≈ 240 MB RGBA — safe for most machines.
+const MAX_CAPTURE_PIXELS = 60_000_000;
+
+// Max height in CSS pixels before we cap the capture.
+const MAX_CAPTURE_HEIGHT = 15_000;
+
+// Max data-URL byte length we'll store in session storage (~10 MB encoded).
+const MAX_STORAGE_BYTES = 10 * 1024 * 1024;
+
+// --- Storage Setup ---
+
+// Raise session storage quota to maximum (resets on browser restart anyway).
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.storage.session.setAccessLevel({
+    accessLevel: 'TRUSTED_AND_UNTRUSTED_CONTEXTS',
+  });
+});
+
+// Also run on service-worker startup (covers restarts between installs).
+try {
+  chrome.storage.session.setAccessLevel({
+    accessLevel: 'TRUSTED_AND_UNTRUSTED_CONTEXTS',
+  });
+} catch (_) {}
 
 // --- Storage Helpers ---
 
@@ -10,10 +38,44 @@ async function getReference() {
 
 async function setReference(dataUrl) {
   if (dataUrl) {
-    await chrome.storage.session.set({ referenceDataUrl: dataUrl });
+    if (dataUrl.length > MAX_STORAGE_BYTES) {
+      // Downscale the image to fit storage quota.
+      dataUrl = await downscaleDataUrl(dataUrl, MAX_STORAGE_BYTES);
+    }
+    try {
+      await chrome.storage.session.set({ referenceDataUrl: dataUrl });
+    } catch (err) {
+      // Quota exceeded — try with more aggressive downscale.
+      const smaller = await downscaleDataUrl(dataUrl, MAX_STORAGE_BYTES * 0.6);
+      await chrome.storage.session.set({ referenceDataUrl: smaller });
+    }
   } else {
     await chrome.storage.session.remove('referenceDataUrl');
   }
+}
+
+/**
+ * Downscale a data URL until its byte length is under maxBytes.
+ * Reduces dimensions by 25% each iteration (max 4 rounds).
+ */
+async function downscaleDataUrl(dataUrl, maxBytes) {
+  let scale = 1;
+  let result = dataUrl;
+  for (let i = 0; i < 4 && result.length > maxBytes; i++) {
+    scale *= 0.75;
+    const resp = await fetch(dataUrl);
+    const blob = await resp.blob();
+    const bmp = await createImageBitmap(blob);
+    const w = Math.round(bmp.width * scale);
+    const h = Math.round(bmp.height * scale);
+    const canvas = new OffscreenCanvas(w, h);
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bmp, 0, 0, w, h);
+    bmp.close();
+    const outBlob = await canvas.convertToBlob({ type: 'image/png' });
+    result = await blobToDataUrl(outBlob);
+  }
+  return result;
 }
 
 // --- Message Handling ---
@@ -109,6 +171,12 @@ async function handleStartComparison(options) {
       return { error: 'Could not get page dimensions.' };
     }
 
+    // Enforce pixel budget: cap effective height so canvas doesn't exceed MAX_CAPTURE_PIXELS.
+    const dpr = dims.devicePixelRatio || 1;
+    const canvasW = dims.scrollWidth * dpr;
+    const maxHeightByPixels = Math.floor(MAX_CAPTURE_PIXELS / canvasW);
+    const effectiveHeight = Math.min(dims.scrollHeight, MAX_CAPTURE_HEIGHT, Math.floor(maxHeightByPixels / dpr));
+
     if (options.removeFixed) {
       await sendToContent(tabId, { type: 'HIDE_FIXED_ELEMENTS' });
     }
@@ -116,7 +184,7 @@ async function handleStartComparison(options) {
     await sendToContent(tabId, { type: 'SAVE_SCROLL' });
 
     const captureDelay = options.captureDelay || 150;
-    const captures = await captureAllSlices(tabId, dims, captureDelay, windowId);
+    const stitchedDataUrl = await captureAndStitch(tabId, dims, effectiveHeight, captureDelay, windowId);
 
     await sendToContent(tabId, { type: 'RESTORE_SCROLL' });
 
@@ -124,15 +192,13 @@ async function handleStartComparison(options) {
       await sendToContent(tabId, { type: 'SHOW_FIXED_ELEMENTS' });
     }
 
-    const stitchedDataUrl = await stitchCaptures(captures, dims);
-
     await sendToContent(tabId, {
       type: 'RENDER_COMPARISON',
       reference: referenceDataUrl,
       screenshot: stitchedDataUrl,
     });
 
-    return { ok: true, scrollHeight: dims.scrollHeight };
+    return { ok: true, scrollHeight: dims.scrollHeight, cappedHeight: effectiveHeight };
   } catch (err) {
     try {
       await sendToContent(tabId, { type: 'RESTORE_SCROLL' });
@@ -142,16 +208,21 @@ async function handleStartComparison(options) {
   }
 }
 
-// --- Capture Logic ---
+// --- Capture & Stitch (Memory-Optimized) ---
+// Captures one slice at a time, draws it to the canvas immediately,
+// then discards the data URL and bitmap before moving to the next slice.
 
-async function captureAllSlices(tabId, dims, captureDelay, windowId) {
-  const { scrollWidth, scrollHeight, viewportWidth, viewportHeight, devicePixelRatio } = dims;
-  const effectiveHeight = Math.min(scrollHeight, 15000);
+async function captureAndStitch(tabId, dims, effectiveHeight, captureDelay, windowId) {
+  const { scrollWidth, viewportWidth, viewportHeight, devicePixelRatio } = dims;
+  const dpr = devicePixelRatio || 1;
   const vSlices = Math.ceil(effectiveHeight / viewportHeight);
   const hSlices = Math.ceil(scrollWidth / viewportWidth);
-  const dpr = devicePixelRatio;
-  const captures = new Array(vSlices * hSlices);
-  let idx = 0;
+
+  const canvasW = (scrollWidth * dpr) | 0;
+  const canvasH = (effectiveHeight * dpr) | 0;
+
+  const canvas = new OffscreenCanvas(canvasW, canvasH);
+  const ctx = canvas.getContext('2d');
 
   for (let row = 0; row < vSlices; row++) {
     for (let col = 0; col < hSlices; col++) {
@@ -161,51 +232,26 @@ async function captureAllSlices(tabId, dims, captureDelay, windowId) {
       await sendToContent(tabId, { type: 'SCROLL_FOR_CAPTURE', scrollX, scrollY });
       await delay(captureDelay);
 
+      // Capture this viewport.
       const dataUrl = await chrome.tabs.captureVisibleTab(windowId, { format: 'png' });
 
-      captures[idx++] = {
-        x: (scrollX * dpr) | 0,
-        y: (scrollY * dpr) | 0,
-        clipW: (Math.min(viewportWidth, scrollWidth - scrollX) * dpr) | 0,
-        clipH: (Math.min(viewportHeight, effectiveHeight - scrollY) * dpr) | 0,
-        dataUrl,
-      };
-    }
-  }
-
-  return captures;
-}
-
-// --- Stitching with OffscreenCanvas (Optimized) ---
-
-async function stitchCaptures(captures, dims) {
-  const { scrollWidth, scrollHeight, devicePixelRatio } = dims;
-  const effectiveHeight = Math.min(scrollHeight, 15000);
-  const canvasW = (scrollWidth * devicePixelRatio) | 0;
-  const canvasH = (effectiveHeight * devicePixelRatio) | 0;
-
-  const canvas = new OffscreenCanvas(canvasW, canvasH);
-  const ctx = canvas.getContext('2d');
-
-  const bitmaps = await Promise.all(
-    captures.map(async (cap) => {
-      const resp = await fetch(cap.dataUrl);
+      // Decode, draw, and immediately discard.
+      const resp = await fetch(dataUrl);
       const blob = await resp.blob();
-      return createImageBitmap(blob);
-    })
-  );
+      const bmp = await createImageBitmap(blob);
 
-  try {
-    for (let i = 0; i < captures.length; i++) {
-      const cap = captures[i];
-      ctx.drawImage(bitmaps[i], 0, 0, cap.clipW, cap.clipH, cap.x, cap.y, cap.clipW, cap.clipH);
-    }
-  } finally {
-    for (let i = 0; i < bitmaps.length; i++) {
-      bitmaps[i].close();
+      const clipW = (Math.min(viewportWidth, scrollWidth - scrollX) * dpr) | 0;
+      const clipH = (Math.min(viewportHeight, effectiveHeight - scrollY) * dpr) | 0;
+      const destX = (scrollX * dpr) | 0;
+      const destY = (scrollY * dpr) | 0;
+
+      ctx.drawImage(bmp, 0, 0, clipW, clipH, destX, destY, clipW, clipH);
+      bmp.close();
+      // dataUrl, resp, blob are now eligible for GC.
     }
   }
 
+  // Convert final canvas to data URL once.
   const resultBlob = await canvas.convertToBlob({ type: 'image/png' });
   return blobToDataUrl(resultBlob);
 }

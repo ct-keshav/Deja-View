@@ -35,6 +35,10 @@
   const copyAllBtn = document.getElementById('copy-all-btn');
   const statusEl = document.getElementById('status');
 
+  // --- Constants ---
+  var MAX_UPLOAD_FILE_SIZE = 20 * 1024 * 1024; // 20 MB file size
+  var MAX_UPLOAD_PIXELS = 40_000_000; // 40M pixels (~160 MB RGBA)
+
   // --- State ---
   let referenceDataUrl = null;
   let activeSource = 'tab';
@@ -112,24 +116,37 @@
   });
 
   function handleFile(file) {
-    if (file.size > 50 * 1024 * 1024) {
-      setStatus('File too large (max 50MB).', true);
+    if (file.size > MAX_UPLOAD_FILE_SIZE) {
+      setStatus('File too large (max ' + Math.round(MAX_UPLOAD_FILE_SIZE / 1024 / 1024) + 'MB).', true);
       return;
     }
     const reader = new FileReader();
     reader.onload = function (e) {
-      referenceDataUrl = e.target.result;
+      var dataUrl = e.target.result;
       const img = new Image();
       img.onload = function () {
+        var pixels = img.naturalWidth * img.naturalHeight;
+        if (pixels > MAX_UPLOAD_PIXELS) {
+          setStatus(
+            'Image too large (' + img.naturalWidth + 'x' + img.naturalHeight +
+            '). Max ~' + Math.round(Math.sqrt(MAX_UPLOAD_PIXELS)) + 'px per side.',
+            true
+          );
+          return;
+        }
+        referenceDataUrl = dataUrl;
         previewDims.textContent = img.naturalWidth + ' x ' + img.naturalHeight + 'px';
+        preview.src = referenceDataUrl;
+        previewContainer.hidden = false;
+        dropPrompt.hidden = true;
+        options.hidden = false;
+        updateCompareButton();
+        setStatus('Reference loaded. Click "Capture & Compare".');
       };
-      img.src = referenceDataUrl;
-      preview.src = referenceDataUrl;
-      previewContainer.hidden = false;
-      dropPrompt.hidden = true;
-      options.hidden = false;
-      updateCompareButton();
-      setStatus('Reference loaded. Click "Capture & Compare".');
+      img.onerror = function () {
+        setStatus('Could not decode image.', true);
+      };
+      img.src = dataUrl;
     };
     reader.readAsDataURL(file);
   }
@@ -270,8 +287,8 @@
         compareTabBtn.disabled = false;
       } else {
         let msg = 'Comparison active. Check the page.';
-        if (response && response.scrollHeight > 15000) {
-          msg += ' Warning: page height (' + response.scrollHeight + 'px) exceeds 15,000px \u2014 capture was capped.';
+        if (response && response.cappedHeight && response.scrollHeight > response.cappedHeight) {
+          msg += ' Note: page height (' + response.scrollHeight + 'px) was capped to ' + response.cappedHeight + 'px to stay within memory limits.';
         }
         setStatus(msg);
         copyAllBtn.hidden = false;
@@ -321,8 +338,8 @@
         compareBtn.disabled = false;
       } else {
         let msg = 'Comparison active. Check the page.';
-        if (response && response.scrollHeight > 15000) {
-          msg += ' Warning: page height (' + response.scrollHeight + 'px) exceeds 15,000px \u2014 capture was capped.';
+        if (response && response.cappedHeight && response.scrollHeight > response.cappedHeight) {
+          msg += ' Note: page height (' + response.scrollHeight + 'px) was capped to ' + response.cappedHeight + 'px to stay within memory limits.';
         }
         setStatus(msg);
         copyAllBtn.hidden = false;
