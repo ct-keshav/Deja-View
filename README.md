@@ -84,6 +84,10 @@ Deja-View/
     └── icon128.png
 ```
 
+## Author
+
+**Keshav Agarwal** — [GitHub](https://github.com/ct-keshav)
+
 ## License
 
 [MIT](LICENSE)

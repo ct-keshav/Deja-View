@@ -3,6 +3,7 @@
   "name": "Deja View",
   "version": "1.0.0",
   "description": "Visual regression testing made simple. Capture, compare, and spot pixel differences — no CI required.",
+  "author": "Keshav Agarwal",
   "permissions": [
     "activeTab",
     "scripting",
