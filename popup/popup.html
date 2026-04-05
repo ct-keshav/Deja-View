@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="../lib/theme.css">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Deja View</h1>
+      <span class="version">v1.0</span>
+    </div>
+
+    <!-- Source mode tabs -->
+    <div class="source-tabs">
+      <button class="source-tab active" data-source="tab">Capture from Tab</button>
+      <button class="source-tab" data-source="upload">Upload / Paste</button>
+    </div>
+
+    <!-- Upload / Paste panel -->
+    <div id="panel-upload" class="panel" hidden>
+      <div id="drop-zone" class="drop-zone" tabindex="0">
+        <input type="file" id="file-input" accept="image/*" hidden>
+        <div id="drop-zone-prompt" class="drop-zone__prompt">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+          <span class="drop-zone__text">Drop, click, or paste (Ctrl+V)</span>
+          <span class="drop-zone__hint">Supports PNG, JPG, WebP</span>
+        </div>
+        <div id="preview-container" class="preview-container" hidden>
+          <img id="preview" class="preview">
+          <div class="preview-info">
+            <span id="preview-dims" class="preview-dims"></span>
+          </div>
+          <button id="clear-btn" class="clear-btn" title="Remove image">&times;</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Capture from Tab panel -->
+    <div id="panel-tab" class="panel">
+      <div class="tab-capture-section">
+
+        <!-- Step indicator -->
+        <div class="steps">
+          <div class="step active" id="step1-indicator">
+            <span class="step-num">1</span>
+            <span class="step-text">Capture reference</span>
+          </div>
+          <div class="step-arrow">&#8250;</div>
+          <div class="step" id="step2-indicator">
+            <span class="step-num">2</span>
+            <span class="step-text">Compare</span>
+          </div>
+        </div>
+
+        <!-- Step 1: Capture current tab as reference -->
+        <div id="step1-content">
+          <p class="tab-capture-desc">Navigate to the <strong>old version</strong> tab, then click below to capture it as reference.</p>
+          <div class="current-tab-info" id="current-tab-info"></div>
+          <button id="capture-this-btn" class="action-btn primary">Capture This Tab as Reference</button>
+        </div>
+
+        <!-- Step 2: Show captured reference, compare against current tab -->
+        <div id="step2-content" hidden>
+          <div class="ref-captured">
+            <div class="ref-captured__header">
+              <span class="ref-captured__label">Reference captured</span>
+              <button id="recapture-btn" class="ref-captured__redo" title="Recapture">Recapture</button>
+            </div>
+            <img id="tab-ref-preview" class="preview">
+            <span id="tab-ref-dims" class="preview-dims"></span>
+          </div>
+          <p class="tab-capture-desc">Now navigate to the <strong>new version</strong> tab and click below to compare.</p>
+          <div class="current-tab-info" id="compare-tab-info"></div>
+          <button id="compare-tab-btn" class="action-btn primary">Compare Against This Tab</button>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Options (shared, shown when reference is ready) -->
+    <div id="options" class="options" hidden>
+      <label class="checkbox-label">
+        <input type="checkbox" id="remove-fixed">
+        <span>Remove fixed/sticky elements</span>
+      </label>
+      <div class="range-row">
+        <span class="range-label-text">Capture delay:</span>
+        <input type="range" id="capture-delay" min="50" max="1000" step="50" value="150">
+        <span id="delay-value" class="range-value">150ms</span>
+      </div>
+    </div>
+
+    <!-- Compare button (upload mode only) -->
+    <button id="compare-btn" class="action-btn primary" disabled hidden>Capture &amp; Compare</button>
+
+    <!-- Copy all images button (visible when comparison is active) -->
+    <button id="copy-all-btn" class="action-btn secondary" hidden>Copy All Images to Clipboard</button>
+
+    <p id="status" class="status"></p>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

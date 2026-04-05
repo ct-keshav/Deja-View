@@ -1,0 +1,12 @@
+#vdiff-overlay-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2147483646;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+#vdiff-overlay-container canvas {
+  display: block;
+}

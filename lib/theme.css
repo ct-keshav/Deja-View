@@ -1,0 +1,52 @@
+/* =============================================
+   Deja View - Theme Tokens  ("Red Ocean")
+   Gradient: #1d4350 (dark teal) → #a43931 (deep red)
+   Single source of truth for all colors/spacing.
+   ============================================= */
+
+:root {
+  /* --- Base backgrounds --- */
+  --bg-primary: #1f2f33;
+  --bg-secondary: #283d41;
+  --bg-tertiary: #334b4f;
+
+  /* --- Borders --- */
+  --border-default: #436065;
+  --border-muted: #587578;
+
+  /* --- Text --- */
+  --text-primary: #f5efea;
+  --text-secondary: #d2c8be;
+  --text-muted: #a89e96;
+
+  /* --- Accent gradient (dark teal → deep red) --- */
+  --accent-teal: #1d4350;
+  --accent-red: #a43931;
+  --accent-warm: #d4605a;
+  --gradient-accent: linear-gradient(135deg, #1d4350 0%, #a43931 100%);
+  --gradient-accent-bright: linear-gradient(135deg, #2e6e80 0%, #d4605a 100%);
+
+  /* --- Semantic colors --- */
+  --color-success: #4caf7d;
+  --color-success-muted: rgba(76, 175, 125, 0.3);
+  --color-danger: #d44840;
+  --color-warning: #d4a24c;
+
+  /* --- Shadows --- */
+  --shadow-accent-sm: 0 2px 8px rgba(164, 57, 49, 0.2);
+  --shadow-accent-md: 0 4px 14px rgba(164, 57, 49, 0.25);
+  --shadow-accent-lg: 0 6px 20px rgba(164, 57, 49, 0.35);
+  --shadow-overlay: 0 2px 12px rgba(0, 0, 0, 0.5);
+
+  /* --- Subtle tints (hover/focus states) --- */
+  --tint-accent-3: rgba(164, 57, 49, 0.04);
+  --tint-accent-5: rgba(164, 57, 49, 0.07);
+  --tint-accent-8: rgba(164, 57, 49, 0.10);
+  --tint-accent-12: rgba(164, 57, 49, 0.15);
+
+  /* --- Radii --- */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-full: 50%;
+}
