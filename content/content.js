@@ -313,9 +313,11 @@
     var h = state.normalizedHeight;
     var gap = 16;
     var labelH = 32;
-    var cols = 4;
-    var totalW = w * cols + gap * (cols + 1);
-    var totalH = h + labelH + gap * 2;
+    var badgeRowH = 28; // height reserved between rows for match % badge
+
+    // 2×2 grid layout: [ORIGINAL | CURRENT] / [DIFF | HEATMAP]
+    var totalW = w * 2 + gap * 3;
+    var totalH = h * 2 + labelH * 2 + gap * 3 + badgeRowH;
 
     // Check if composite would exceed pixel budget.
     // If so, scale down to fit.
@@ -329,6 +331,7 @@
       h = Math.round(h * scale);
       gap = Math.round(gap * scale);
       labelH = Math.round(labelH * scale);
+      badgeRowH = Math.round(badgeRowH * scale);
     }
 
     var c = document.createElement('canvas');
@@ -343,33 +346,74 @@
     ctx.font = '600 ' + fontSize + 'px -apple-system, BlinkMacSystemFont, sans-serif';
     ctx.textBaseline = 'middle';
 
-    var imgY = labelH + gap;
-    var labels = [
-      { text: 'ORIGINAL', color: '#e94560' },
-      { text: 'CURRENT', color: '#3c8cff' },
-      { text: 'DIFF (' + state.matchPercentage + '% match)', color: '#e9a825' },
-      { text: 'HEATMAP', color: '#c850c0' },
+    // Row 1 y-coordinates
+    var row1LabelY = gap;
+    var row1ImgY = gap + labelH;
+
+    // Row 2 y-coordinates (after gap + badgeRow between rows)
+    var row2LabelY = gap + labelH + h + gap + badgeRowH;
+    var row2ImgY = row2LabelY + labelH;
+
+    // Column x-coordinates
+    var col1X = gap;
+    var col2X = gap * 2 + w;
+
+    var panels = [
+      { text: 'ORIGINAL', color: '#e94560', x: col1X, labelY: row1LabelY, imgY: row1ImgY },
+      { text: 'CURRENT',  color: '#3c8cff', x: col2X, labelY: row1LabelY, imgY: row1ImgY },
+      { text: 'DIFF',     color: '#e9a825', x: col1X, labelY: row2LabelY, imgY: row2ImgY },
+      { text: 'HEATMAP',  color: '#c850c0', x: col2X, labelY: row2LabelY, imgY: row2ImgY },
     ];
 
-    for (var i = 0; i < cols; i++) {
-      var lx = gap * (i + 1) + w * i;
-      ctx.fillStyle = labels[i].color;
-      ctx.fillText(labels[i].text, lx, labelH / 2 + gap / 2);
+    // Draw panel labels
+    for (var i = 0; i < panels.length; i++) {
+      ctx.fillStyle = panels[i].color;
+      ctx.fillText(panels[i].text, panels[i].x, panels[i].labelY + labelH / 2);
     }
 
-    var x1 = gap;
-    ctx.drawImage(state.referenceImg, x1, imgY, w, h);
+    // Draw panel images
+    ctx.drawImage(state.referenceImg, col1X, row1ImgY, w, h);
+    ctx.drawImage(state.screenshotImg, col2X, row1ImgY, w, h);
 
-    var x2 = gap * 2 + w;
-    ctx.drawImage(state.screenshotImg, x2, imgY, w, h);
-
-    var x3 = gap * 3 + w * 2;
     var diffCanvas = imageDataToCanvas(state.diffImageData);
-    ctx.drawImage(diffCanvas, 0, 0, diffCanvas.width, diffCanvas.height, x3, imgY, w, h);
+    ctx.drawImage(diffCanvas, 0, 0, diffCanvas.width, diffCanvas.height, col1X, row2ImgY, w, h);
 
-    var x4 = gap * 4 + w * 3;
     var heatCanvas = imageDataToCanvas(state.heatmapImageData);
-    ctx.drawImage(heatCanvas, 0, 0, heatCanvas.width, heatCanvas.height, x4, imgY, w, h);
+    ctx.drawImage(heatCanvas, 0, 0, heatCanvas.width, heatCanvas.height, col2X, row2ImgY, w, h);
+
+    // Draw centered match % badge between the two rows
+    var pct = parseFloat(state.matchPercentage);
+    var badgeText = 'MATCH: ' + state.matchPercentage + '%';
+    var badgeFontSize = Math.max(10, Math.round(13 * scale));
+    ctx.font = '700 ' + badgeFontSize + 'px -apple-system, BlinkMacSystemFont, sans-serif';
+    var textW = ctx.measureText(badgeText).width;
+    var badgePadX = Math.max(8, Math.round(12 * scale));
+    var badgePadY = Math.max(4, Math.round(5 * scale));
+    var badgeW = textW + badgePadX * 2;
+    var badgeH = badgeFontSize + badgePadY * 2;
+    var badgeCenterY = gap + labelH + h + gap + badgeRowH / 2;
+    var badgeX = (totalW - badgeW) / 2;
+    var badgeY = badgeCenterY - badgeH / 2;
+    var badgeColor = pct >= 90 ? 'rgba(48,200,80,0.85)' : pct >= 50 ? 'rgba(233,168,37,0.85)' : 'rgba(240,48,48,0.85)';
+
+    ctx.beginPath();
+    var br = Math.max(4, Math.round(6 * scale));
+    ctx.moveTo(badgeX + br, badgeY);
+    ctx.lineTo(badgeX + badgeW - br, badgeY);
+    ctx.quadraticCurveTo(badgeX + badgeW, badgeY, badgeX + badgeW, badgeY + br);
+    ctx.lineTo(badgeX + badgeW, badgeY + badgeH - br);
+    ctx.quadraticCurveTo(badgeX + badgeW, badgeY + badgeH, badgeX + badgeW - br, badgeY + badgeH);
+    ctx.lineTo(badgeX + br, badgeY + badgeH);
+    ctx.quadraticCurveTo(badgeX, badgeY + badgeH, badgeX, badgeY + badgeH - br);
+    ctx.lineTo(badgeX, badgeY + br);
+    ctx.quadraticCurveTo(badgeX, badgeY, badgeX + br, badgeY);
+    ctx.closePath();
+    ctx.fillStyle = badgeColor;
+    ctx.fill();
+
+    ctx.fillStyle = '#fff';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(badgeText, badgeX + badgePadX, badgeCenterY);
 
     return c;
   }
